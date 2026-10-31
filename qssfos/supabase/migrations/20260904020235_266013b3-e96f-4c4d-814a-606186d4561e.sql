@@ -1,0 +1,2 @@
+ALTER TABLE public.storefronts ADD COLUMN IF NOT EXISTS latitude double precision, ADD COLUMN IF NOT EXISTS longitude double precision;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS payment_reference text, ADD COLUMN IF NOT EXISTS payment_app text, ADD COLUMN IF NOT EXISTS payment_claimed_at timestamptz, ADD COLUMN IF NOT EXISTS payment_confirmed_at timestamptz;

@@ -1,0 +1,1 @@
+ALTER TABLE public.storefronts ADD COLUMN IF NOT EXISTS upi_qr_url text;

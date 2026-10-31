@@ -1,0 +1,23 @@
+# Customer catalog features
+- [x] Allow temporary “I've paid” submission without a UTR and preserve pending payment; five payment rules passed, live checkout continuation and safe retry checked without sending a fake kitchen order.
+- [ ] Verify receipt-free checkout acceptance and tracking against Street OS with an authorized showcase order; real-device UPI handoff also remains unverified.
+- [x] Update ratings to completed orders only, optional comments, menu averages/counts and Top rated sorting; 15 rule tests passed and live menu sorting checked without overflow.
+- [x] Prepare shared vendor-owned product_ratings and product_rating_summary SQL handoff with private raw rows and capability-authorized writes; not applied to consumer storage.
+- [ ] Enable and verify saved food ratings on a real order (Street OS must implement the scoped-token/write/read contract in vendor-migrations/food-ratings-handoff.md).
+- [x] Clarify custom-domain Google Maps setup: current server-side address search does not require a custom-domain browser key; browser maps would.
+- [x] Finish illustrated welcome slides; verified all slides, Skip/completion, swipe, keyboard and reduced motion at desktop and compact phone sizes.
+- [x] Update current-location control for device location or protected manual Google Maps search; existing distance/discovery calculations preserved; device flow and sign-in gate checked.
+- [ ] Validate live Google Maps address results on an authorized deployed origin after fresh OTP sign-in (sandbox cannot test live Maps behavior).
+- [x] Apply shared food-app tokens and reusable visual primitives.
+- [x] Restyle home/menu/cart/checkout/orders/profile, sign-in/intro, and navigation without changing queries or ordering behavior.
+- [x] Verify truthful badges and desktop/mobile home → menu → cart → checkout; payment receipt gate preserved; nine rule tests pass.
+- [x] Require UPI receipt before order submission and remove pay-later alternatives; preserve vendor-only verification.
+- [x] Named UPI app buttons target explicit Android packages; desktop/unsupported devices show QR fallback (real-device launch remains unverified).
+- [ ] Enforce verified payment before order creation (requires a Street OS pre-order payment confirmation contract; customer receipts alone cannot prove payment).
+- [x] Vendor-data Veg only filter and diet marks implemented without guessing missing data.
+- [x] Order Again with current availability checks and skipped-item notices implemented.
+- [x] Presentational Top Picks below existing kitchens.
+- [x] Same-kitchen cart recommendations with quick add, checked on the live menu/cart.
+- [x] Five catalog rule tests; discovery and customer state preserved.
+- [ ] Apply vendor products column change and return is_veg from Street OS menu API (requires vendor project schema/API access; handoff SQL prepared).
+- [ ] Confirm Order Again on a real past order returning product_id (requires Street OS order API to provide product IDs and a real customer order).

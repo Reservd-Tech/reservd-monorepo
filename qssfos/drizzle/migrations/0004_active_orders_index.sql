@@ -1,0 +1,1 @@
+CREATE INDEX orders_active_queue_idx ON public.orders (storefront_id, status, created_at) WHERE archived_at IS NULL;
