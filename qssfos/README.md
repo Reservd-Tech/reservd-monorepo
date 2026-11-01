@@ -120,3 +120,17 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+### Supabase authentication
+
+Copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` plus the
+project's public anon/publishable key in `VITE_SUPABASE_ANON_KEY`. These values
+are intentionally client-visible; never use a service-role key or store secrets
+in `VITE_*` variables.
+
+Sign-in uses Supabase email or SMS one-time codes and does not create accounts.
+Configure the Email and Phone providers, email SMTP settings, SMS provider API
+credentials, and message templates in **Supabase Dashboard → Authentication**
+(Providers, SMTP Settings, and Message Templates). SMS WebOTP autofill requires
+the SMS template to end with the origin-bound suffix `@your-domain #{{ .Code }}`,
+using the application's host without a scheme or path.

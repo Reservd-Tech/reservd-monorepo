@@ -9,12 +9,16 @@ import { toast } from "sonner";
 import { useCustomer } from "@/lib/customer";
 import { syncCustomer } from "@/lib/customer.functions";
 import { endLocationSession } from "@/lib/location.functions";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
     meta: [
       { title: "Your profile — Reservd" },
-      { name: "description", content: "Manage your name and phone number for faster Fulki checkout." },
+      {
+        name: "description",
+        content: "Manage your name and phone number for faster Fulki checkout.",
+      },
       { property: "og:title", content: "Your profile — Reservd" },
       { property: "og:description", content: "Manage your Reservd ordering details." },
       { property: "og:type", content: "website" },
@@ -31,6 +35,27 @@ function Profile() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await endSession();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+
+      signOut();
+      setName("");
+      setPhone("");
+      setEmail("");
+      toast.success("Signed out on this device");
+    } catch (error) {
+      console.error("[auth] sign-out failed", error);
+      toast.error("Couldn't sign out. Please try again.");
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   useEffect(() => {
     if (hydrated) {
@@ -48,7 +73,9 @@ function Profile() {
         </span>
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-extrabold">{profile.name || "Guest"}</h1>
-          <p className="truncate text-sm text-muted-foreground">{profile.phone || profile.email || "Add your details"}</p>
+          <p className="truncate text-sm text-muted-foreground">
+            {profile.phone || profile.email || "Add your details"}
+          </p>
         </div>
       </header>
 
@@ -116,17 +143,11 @@ function Profile() {
 
       <Button
         variant="secondary"
-        onClick={() => {
-          signOut();
-          void endSession();
-          setName("");
-          setPhone("");
-          setEmail("");
-          toast.success("Signed out on this device");
-        }}
+        disabled={signingOut}
+        onClick={() => void handleSignOut()}
         className="press mt-4 flex h-auto w-full items-center justify-center gap-2 rounded-lg bg-accent py-4 text-sm font-bold text-destructive"
       >
-        <LogOut className="h-4 w-4" /> Log out
+        <LogOut className="h-4 w-4" /> {signingOut ? "Signing out…" : "Log out"}
       </Button>
     </div>
   );

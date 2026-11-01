@@ -1,58 +1,99 @@
 import { Button } from "@/components/ui/button";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Loader2, MailCheck } from "lucide-react";
+import { Loader2, MailCheck, Smartphone } from "lucide-react";
 
 import { BrandLogo } from "@/components/BrandLogo";
 import { Onboarding, ONBOARDING_KEY } from "@/components/Onboarding";
+import { OtpCodeInput } from "@/components/OtpCodeInput";
 import { useCustomer } from "@/lib/customer";
 import { syncCustomer } from "@/lib/customer.functions";
-import { requestOtp, verifyOtp } from "@/lib/otp.functions";
+import { grantVerifiedLocationSession } from "@/lib/otp.functions";
+import { supabase } from "@/integrations/supabase/client";
 
 const RESEND_COOLDOWN = 30;
+type OtpChannel = "email" | "sms";
+
+function normalizePhone(phone: string) {
+  const compact = phone.trim().replace(/[()\s-]/g, "");
+  if (/^\+[1-9]\d{6,14}$/.test(compact)) return compact;
+
+  const digits = compact.replace(/\D/g, "");
+  if (/^\d{10}$/.test(digits)) return `+91${digits}`;
+  if (/^91\d{10}$/.test(digits)) return `+${digits}`;
+  return null;
+}
 
 export function WelcomeGate({ children }: { children: ReactNode }) {
-  const { hydrated, onboarded, saveProfile } = useCustomer();
+  const { hydrated, onboarded, profile, saveProfile } = useCustomer();
   const sync = useServerFn(syncCustomer);
-  const sendCode = useServerFn(requestOtp);
-  const checkCode = useServerFn(verifyOtp);
+  const grantLocationAccess = useServerFn(grantVerifiedLocationSession);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
 
   const [step, setStep] = useState<"details" | "otp">("details");
+  const [channel, setChannel] = useState<OtpChannel>("email");
   const [code, setCode] = useState("");
-  const [token, setToken] = useState("");
   const [error, setError] = useState("");
 
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [expiresIn, setExpiresIn] = useState(0);
   const [cooldown, setCooldown] = useState(0);
-  const codeRef = useRef<HTMLInputElement>(null);
   const [intro, setIntro] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    setName(profile.name);
+    setEmail(profile.email);
+    setPhone(profile.phone);
+  }, [hydrated, profile.email, profile.name, profile.phone]);
+
+  useEffect(() => {
+    let active = true;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      setAuthenticated(Boolean(session));
+      setAuthReady(true);
+    });
+
+    void supabase.auth.getSession().then(({ data, error: sessionError }) => {
+      if (!active) return;
+      if (sessionError) console.error("[auth] session restore failed", sessionError);
+      setAuthenticated(Boolean(data.session));
+      setAuthReady(true);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (step !== "otp") return;
     const id = setInterval(() => {
-      setExpiresIn((v) => (v > 0 ? v - 1 : 0));
       setCooldown((v) => (v > 0 ? v - 1 : 0));
     }, 1000);
     return () => clearInterval(id);
   }, [step]);
 
-  useEffect(() => {
-    if (step === "otp") codeRef.current?.focus();
-  }, [step]);
-
-  if (!hydrated) return <div className="min-h-screen bg-background" />;
-  if (onboarded) return <>{children}</>;
+  if (!hydrated || !authReady) return <div className="min-h-screen bg-background" />;
+  if (authenticated && onboarded) return <>{children}</>;
   if (intro)
     return (
       <Onboarding
         onDone={() => {
-          const trimmed = { name: name.trim(), phone: phone.trim(), email: email.trim() };
+          const trimmed = {
+            name: name.trim(),
+            phone: phone.trim(),
+            email: email.trim(),
+          };
           saveProfile(trimmed);
           void sync({ data: { name: trimmed.name, phone: trimmed.phone } }).catch(() => {});
         }}
@@ -61,56 +102,106 @@ export function WelcomeGate({ children }: { children: ReactNode }) {
 
   const trimmedEmail = email.trim();
   const validName = name.trim().length > 1;
-  const validPhone = /^\d{7,15}$/.test(phone.replace(/\D/g, ""));
+  const normalizedPhone = normalizePhone(phone);
+  const validPhone = normalizedPhone !== null;
   const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
-  const canContinue = validName && validPhone && validEmail && !sending;
+  const canContinue = validName && validPhone && (channel !== "email" || validEmail) && !sending;
 
   const send = async () => {
+    const recipient =
+      channel === "email"
+        ? { email: trimmedEmail }
+        : normalizedPhone
+          ? { phone: normalizedPhone }
+          : null;
+    if (!recipient) {
+      setError("Enter a valid phone number in international format.");
+      return;
+    }
+
     setSending(true);
     setError("");
     try {
-      const res = await sendCode({ data: { email: trimmedEmail, name: name.trim() } });
-      if (!res.ok) {
-        setError(res.error);
+      const { error: requestError } =
+        "email" in recipient
+          ? await supabase.auth.signInWithOtp({
+              email: recipient.email,
+              options: { shouldCreateUser: true },
+            })
+          : await supabase.auth.signInWithOtp({
+              phone: recipient.phone,
+              options: { shouldCreateUser: true },
+            });
+      if (requestError) {
+        setError(requestError.message || "We couldn't send a code. Please try again.");
         return;
       }
       setStep("otp");
       setCode("");
-      setToken(res.token);
-      setExpiresIn(res.expiresInSeconds);
       setCooldown(RESEND_COOLDOWN);
-    } catch {
+    } catch (requestError) {
+      console.error("[auth] OTP request failed", requestError);
       setError("Something went wrong sending your code. Please try again.");
-
     } finally {
       setSending(false);
     }
   };
 
   const verify = async () => {
+    const recipient =
+      channel === "email"
+        ? { email: trimmedEmail }
+        : normalizedPhone
+          ? { phone: normalizedPhone }
+          : null;
+    if (!recipient) {
+      setError("Enter a valid phone number in international format.");
+      return;
+    }
+
     setVerifying(true);
     setError("");
     try {
-      const res = await checkCode({ data: { email: trimmedEmail, code, token } });
-      if (!res.ok) {
-        setError(res.error);
+      const { data, error: verifyError } =
+        "email" in recipient
+          ? await supabase.auth.verifyOtp({
+              email: recipient.email,
+              token: code,
+              type: "email",
+            })
+          : await supabase.auth.verifyOtp({
+              phone: recipient.phone,
+              token: code,
+              type: "sms",
+            });
+      if (verifyError || !data.session) {
+        if (verifyError) console.warn("[auth] OTP verification rejected", verifyError);
+        setError("That code is incorrect or expired. Request a new code and try again.");
         setCode("");
-        if (res.requiresNewCode) setExpiresIn(0);
         return;
       }
-      const trimmed = { name: name.trim(), phone: phone.trim(), email: trimmedEmail };
+
+      await grantLocationAccess({ data: { accessToken: data.session.access_token } });
+      const trimmed = {
+        name: name.trim(),
+        phone: phone.trim(),
+        email: trimmedEmail,
+      };
       let seenIntro = false;
       try {
         seenIntro = !!localStorage.getItem(ONBOARDING_KEY);
-      } catch {}
+      } catch (storageError) {
+        console.warn("[auth] couldn't read onboarding state", storageError);
+      }
       if (seenIntro) {
         saveProfile(trimmed);
         void sync({ data: { name: trimmed.name, phone: trimmed.phone } }).catch(() => {});
       } else {
         setIntro(true);
       }
-    } catch {
-      setError("Couldn't verify that code. Please try again.");
+    } catch (verifyError) {
+      console.error("[auth] OTP verification failed", verifyError);
+      setError("We couldn't complete sign-in. Please try again.");
     } finally {
       setVerifying(false);
     }
@@ -122,50 +213,56 @@ export function WelcomeGate({ children }: { children: ReactNode }) {
         <header className="rise-in">
           <BrandLogo className="mb-8 w-48" />
           <span className="inline-flex items-center gap-2 rounded-full bg-accent px-3 py-1 text-[11px] font-bold uppercase tracking-normal text-accent-foreground">
-            <MailCheck className="h-3.5 w-3.5" /> Verify email
+            {channel === "email" ? (
+              <MailCheck className="h-3.5 w-3.5" />
+            ) : (
+              <Smartphone className="h-3.5 w-3.5" />
+            )}
+            Verify {channel === "email" ? "email" : "phone"}
           </span>
           <h1 className="mt-6 text-4xl font-extrabold leading-tight">
             Enter your <span className="heat-text">code</span>
           </h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            We sent a 6-digit code to <span className="font-semibold text-foreground">{trimmedEmail}</span>.
+            We sent a 6-digit code to{" "}
+            <span className="font-semibold text-foreground">
+              {channel === "email" ? trimmedEmail : normalizedPhone}
+            </span>
+            .
           </p>
         </header>
 
         <section className="glass-panel lift mt-10 space-y-4 rounded-lg p-5">
-          <input
-            ref={codeRef}
+          <OtpCodeInput
+            channel={channel}
             value={code}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={6}
-            onChange={(e) => {
-              setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
+            onChange={(value) => {
+              setCode(value);
               setError("");
             }}
-            placeholder="••••••"
-            className="w-full rounded-md border border-input bg-background px-4 py-4 text-center text-2xl font-extrabold tracking-[0.5em] outline-none ring-ring/60 placeholder:text-muted-foreground focus:ring-2"
+            disabled={verifying}
           />
           <p className="text-center text-xs text-muted-foreground">
-            {expiresIn > 0
-              ? `Code expires in ${Math.floor(expiresIn / 60)}:${String(expiresIn % 60).padStart(2, "0")}`
-              : "Your code has expired — request a new one."}
+            Enter the code before it expires. You can also type it manually.
           </p>
           {error && <p className="text-center text-xs font-medium text-destructive">{error}</p>}
           <div className="flex items-center justify-between pt-1 text-xs font-semibold">
             <Button
-              variant="link" className="text-muted-foreground underline-offset-4 hover:underline"
+              variant="link"
+              className="text-muted-foreground underline-offset-4 hover:underline"
               onClick={() => {
                 setStep("details");
                 setError("");
+                setCode("");
               }}
             >
-              Change email
+              Change {channel === "email" ? "email" : "phone"}
             </Button>
             <Button
               disabled={cooldown > 0 || sending}
               onClick={() => void send()}
-              variant="link" className="text-primary disabled:text-muted-foreground"
+              variant="link"
+              className="text-primary disabled:text-muted-foreground"
             >
               {cooldown > 0 ? `Resend in ${cooldown}s` : sending ? "Sending…" : "Resend code"}
             </Button>
@@ -197,23 +294,61 @@ export function WelcomeGate({ children }: { children: ReactNode }) {
       </header>
 
       <section className="glass-panel lift mt-10 space-y-4 rounded-lg p-5">
-        <Field label="Your name" value={name} onChange={setName} placeholder="Your name" />
+        <Field
+          label="Your name"
+          value={name}
+          onChange={setName}
+          placeholder="Your name"
+          autoComplete="name"
+        />
+        <div
+          className="grid grid-cols-2 gap-2"
+          role="group"
+          aria-label="Choose a verification method"
+        >
+          {(["email", "sms"] as const).map((method) => (
+            <button
+              key={method}
+              type="button"
+              aria-pressed={channel === method}
+              onClick={() => {
+                setChannel(method);
+                setError("");
+              }}
+              className={`rounded-md border px-3 py-2.5 text-sm font-bold transition-colors ${
+                channel === method
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-input bg-background text-muted-foreground"
+              }`}
+            >
+              {method === "email" ? "Email code" : "Text me a code"}
+            </button>
+          ))}
+        </div>
         <Field
           label="Email"
           value={email}
           onChange={setEmail}
           placeholder="you@email.com"
           type="email"
+          autoComplete="email"
         />
         <Field
           label="Phone"
           value={phone}
           onChange={setPhone}
-          placeholder="98765 43210"
+          placeholder="+91 98765 43210"
           inputMode="tel"
+          autoComplete="tel"
         />
-        {trimmedEmail !== "" && !validEmail && (
+        <p className="text-xs text-muted-foreground">
+          Use +country code for international numbers; Indian 10-digit numbers are accepted.
+        </p>
+        {channel === "email" && trimmedEmail !== "" && !validEmail && (
           <p className="text-xs font-medium text-destructive">Enter a valid email address.</p>
+        )}
+        {phone !== "" && !validPhone && (
+          <p className="text-xs font-medium text-destructive">Enter a valid phone number.</p>
         )}
         {error && <p className="text-xs font-medium text-destructive">{error}</p>}
       </section>
@@ -237,6 +372,7 @@ function Field({
   placeholder,
   type = "text",
   inputMode,
+  autoComplete,
 }: {
   label: string;
   value: string;
@@ -244,6 +380,7 @@ function Field({
   placeholder: string;
   type?: string;
   inputMode?: "tel" | "text" | "email";
+  autoComplete?: string;
 }) {
   return (
     <label className="block">
@@ -254,6 +391,7 @@ function Field({
         value={value}
         type={type}
         inputMode={inputMode}
+        autoComplete={autoComplete}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className="w-full rounded-md border border-input bg-background px-4 py-3.5 text-base outline-none ring-ring/60 placeholder:text-muted-foreground focus:ring-2"

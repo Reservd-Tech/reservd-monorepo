@@ -4,6 +4,7 @@ node_modules/
 # Local environment files
 .env
 .env.*
+!qssfos/.env.example
 
 # Build output and caches
 dist/
